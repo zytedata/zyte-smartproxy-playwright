@@ -1,0 +1,18 @@
+{
+  "name": "zyte-smartproxy-playwright",
+  "version": "0.1.0",
+  "description": "A playwright enhancement with zyte smart proxy manager services",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["playwright", "zyte", "smart", "proxy", "manager"],
+  "author": "Zyte Group Ltd.",
+  "license": "MIT",
+  "dependencies": {
+    "@cliqz/adblocker-playwright": "^1.23.2",
+    "cross-fetch": "^3.1.4",
+    "playwright": "^1.17.1"
+  },
+  "homepage": "https://github.com/zytedata/zyte-smartproxy-playwright"
+}
