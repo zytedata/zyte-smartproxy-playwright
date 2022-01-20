@@ -1,6 +1,7 @@
 const { chromium, devices, errors, firefox, request, selectors, webkit } = require('playwright');
 const cross_fetch = require('cross-fetch');
 const { PlaywrightBlocker } = require('@cliqz/adblocker-playwright');
+const { version } = require('./package.json');
 
 class ZyteSmartProxyPlaywright {
     constructor(browser_type) {
@@ -11,31 +12,33 @@ class ZyteSmartProxyPlaywright {
         options = options || {}
         this.apikey = options.spm_apikey;
         this.spm_host = options.spm_host || 'http://proxy.zyte.com:8011';
-        this.static_bypass = options.static_bypass || true;
-        this.static_bypass_regex = options.static_bypass_regex || /.*?\.(?:txt|css|eot|gif|ico|jpe?g|js|less|mkv|mp4|mpe?g|png|ttf|webm|webp|woff2?)$/;
-        this.block_ads = options.block_ads === true ? true : false;
+        this.static_bypass = options.static_bypass !== false;
+        this.static_bypass_regex = options.static_bypass_regex || /.*?\.(?:txt|json|css|less|js|mjs|cjs|gif|ico|jpe?g|svg|png|webp|mkv|mp4|mpe?g|webm|eot|ttf|woff2?)$/;
+        this.block_ads = options.block_ads !== false;
         this.block_list = options.block_list || [
             'https://easylist.to/easylist/easylist.txt',
             'https://easylist.to/easylist/easyprivacy.txt',
         ];
-        this.blocker = await PlaywrightBlocker.fromLists(cross_fetch.fetch, this.block_list);
+        if (this.block_ads) {
+            this.blocker = await PlaywrightBlocker.fromLists(cross_fetch.fetch, this.block_list);
+        }
     }
 
     _patchPageCreation(browser) {
         browser.newPage = (
             function(originalMethod, context, module_context) {
                 return async function() {
-                    const page = await originalMethod.apply(context);
-                    module_context.blocker.enableBlockingInPage(page);
-                    await page.route('**/*', async (route, request) => {
+                    const page = await originalMethod.apply(context, arguments);
+                    if (module_context.block_ads) {
+                        module_context.blocker.enableBlockingInPage(page);
+                    }
+                    await page.route(_url => true, async (route, request) => {
                         try {
                             var headers = request.headers();
                             if (
                                 module_context.static_bypass &&
-                                module_context.static_bypass_regex.test(
-                                    request.url()
-                                )
-                            )   {
+                                module_context.static_bypass_regex.test(request.url())
+                            ) {
                                 const response = await cross_fetch.fetch(request.url());
                                 const headers = {};
                                 for (var pair of response.headers.entries()) {
@@ -57,7 +60,10 @@ class ZyteSmartProxyPlaywright {
                                 else {
                                     headers['X-Crawlera-Session'] = 'create';
                                 }
-                                headers['X-Crawlera-Client'] = 'playwright';
+                                headers['X-Crawlera-Client'] = 'zyte-smartproxy-playwright/' + version;
+                                headers['X-Crawlera-No-Bancheck'] = '1';
+                                headers['X-Crawlera-Profile'] = 'pass';
+                                headers['X-Crawlera-Cookies'] = 'disable';
                                 route.continue({ headers });
                             }
                         }
@@ -72,7 +78,7 @@ class ZyteSmartProxyPlaywright {
                         if (response.ok() && headers['x-crawlera-session']) {
                             module_context.SPMSessionId = headers['x-crawlera-session'];
                         }
-                        else if (headers['x-crawlera-error'] === 'banned') {
+                        else if (headers['x-crawlera-error'] === 'bad_session_id') {
                             module_context.SPMSessionId = undefined;
                         }
                     });
@@ -84,34 +90,13 @@ class ZyteSmartProxyPlaywright {
 
     async launch(options) {
         await this._configure_zyte_smartproxy_playwright(options)
-        let args = [
-            '--no-sandbox',
-            '--auto-open-devtools-for-tabs',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--disable-gpu',
-            '--disable-web-security',
-            '--ignore-certificate-errors',
-            '--ignore-certificate-errors-spki-list'
-        ]
-        var necessary_options = {
-            ignoreHTTPSErrors: true,
-            args: args,
-            firefoxUserPrefs: {
-                'network.websocket.allowInsecureFromHTTPS': true,
-                'security.cert_pinning.enforcement_level': 0,
-            },
-            bypassCSP: true,
-        }
         if (this.apikey) {
-            necessary_options['proxy'] = {
+            options.proxy = {
                 server: this.spm_host,
                 username: this.apikey,
                 password: '',
             }
         }
-        options = {...necessary_options, ...options}
         const browser = await this.browser_type.launch(options);
         if (this.apikey) {
             this._patchPageCreation(browser);
