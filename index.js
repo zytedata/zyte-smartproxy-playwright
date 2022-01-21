@@ -1,7 +1,42 @@
 const { chromium, devices, errors, firefox, request, selectors, webkit } = require('playwright');
 const cross_fetch = require('cross-fetch');
-const { PlaywrightBlocker } = require('@cliqz/adblocker-playwright');
+const adblocker = require('@cliqz/adblocker-playwright');
 const { version } = require('./package.json');
+
+class PlaywrightBlocker extends adblocker.PlaywrightBlocker {
+    isRequestBlocked(route){
+        const details = route.request();
+        const request = adblocker.fromPlaywrightDetails(details);
+        if (this.config.guessRequestTypeFromUrl === true && request.type === 'other') {
+            request.guessTypeOfRequest();
+        }
+        const frame = details.frame();
+        if (request.isMainFrame() ||
+            (request.type === 'document' && frame !== null && frame.parentFrame() === null)) {
+            return false;
+        }
+        const { redirect, match } = this.match(request);
+        if (redirect !== undefined) {
+            if (redirect.contentType.endsWith(';base64')) {
+                route.fulfill({
+                  body: Buffer.from(redirect.body, 'base64'),
+                  contentType: redirect.contentType.slice(0, -7),
+                });
+            } else {
+                route.fulfill({
+                  body: redirect.body,
+                  contentType: redirect.contentType,
+                });
+            }
+            return true;
+        }
+        if (match === true) {
+            route.abort('blockedbyclient');
+            return true;
+        }
+        return false;
+    };
+}
 
 class ZyteSmartProxyPlaywright {
     constructor(browser_type) {
@@ -29,11 +64,12 @@ class ZyteSmartProxyPlaywright {
             function(originalMethod, context, module_context) {
                 return async function() {
                     const page = await originalMethod.apply(context, arguments);
-                    if (module_context.block_ads) {
-                        module_context.blocker.enableBlockingInPage(page);
-                    }
                     await page.route(_url => true, async (route, request) => {
                         try {
+                            if (module_context.block_ads) 
+                                if (module_context.blocker.isRequestBlocked(route)) 
+                                    return;
+
                             var headers = request.headers();
                             if (
                                 module_context.static_bypass &&
