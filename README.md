@@ -18,18 +18,18 @@ npm install zyte-smartproxy-playwright
 2. **Create a file `sample.js` with following content and replace `<SPM_APIKEY>` with your SPM Apikey**
 
 ``` javascript
-const { firefox } = require('zyte-smartproxy-playwright');
+const { chromium } = require('zyte-smartproxy-playwright'); // Or 'firefox' or 'webkit'
 
 (async () => {
-    const browser = await firefox.launch({
+    const browser = await chromium.launch({
         spm_apikey: '<SPM_APIKEY>'
     });
     console.log('Before new page');
-    const page = await browser.newPage();
+    const page = await browser.newPage({ignoreHTTPSErrors: true});
 
     console.log('Opening page ...');
     try {
-        await page.goto('http://toscrape.com/', {timeout: 180000});
+        await page.goto('https://toscrape.com/', {timeout: 180000});
     } catch(err) {
         console.log(err);
     }
@@ -55,9 +55,9 @@ and some additional arguments defined below:
 
 | Argument | Default Value | Description |
 |----------|---------------|-------------|
-| `spm_apikey` (required) | `undefined` | Zyte Smart Proxy Manager API key that can be found on your zyte.com account. |
+| `spm_apikey` | `undefined` | Zyte Smart Proxy Manager API key that can be found on your zyte.com account. |
 | `spm_host` | `http://proxy.zyte.com:8011` | Zyte Smart Proxy Manager proxy host. |
 | `static_bypass` | `true` | When `true` Zyte SmartProxy Playwright will skip proxy use for static assets defined by `static_bypass_regex` or pass `false` to use proxy. |
-| `static_bypass_regex` | `/.*?\.(?:txt\|css\|eot\|gif\|ico\|jpe?g\|js\|less\|mkv\|mp4\|mpe?g\|png\|ttf\|webm\|webp\|woff2?)$/` | Regex to use filtering URLs for `static_bypass`. |
+| `static_bypass_regex` | `/.*?\.(?:txt\|json\|css\|less\|js\|mjs\|cjs\|gif\|ico\|jpe?g\|svg\|png\|webp\|mkv\|mp4\|mpe?g\|webm\|eot\|ttf\|woff2?)$/` | Regex to use filtering URLs for `static_bypass`. |
 | `block_ads` | `true` | When `true` Zyte SmartProxy Playwright will block ads defined by `block_list` using `@cliqz/adblocker-playwright` package. |
 | `block_list` | `['https://easylist.to/easylist/easylist.txt', 'https://easylist.to/easylist/easyprivacy.txt']` | Block list to be used by Zyte SmartProxy Playwright in order to initiate blocker enginer using `@cliqz/adblocker-playwright` and block ads |
