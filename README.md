@@ -22,7 +22,8 @@ const { chromium } = require('zyte-smartproxy-playwright'); // Or 'firefox' or '
 
 (async () => {
     const browser = await chromium.launch({
-        spm_apikey: '<SPM_APIKEY>'
+        spm_apikey: '<SPM_APIKEY>',
+        headless: false,
     });
     console.log('Before new page');
     const page = await browser.newPage({ignoreHTTPSErrors: true});

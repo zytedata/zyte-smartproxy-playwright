@@ -70,7 +70,6 @@ class ZyteSmartProxyPlaywright {
                                 if (module_context.blocker.isRequestBlocked(route)) 
                                     return;
 
-                            var headers = request.headers();
                             if (
                                 module_context.static_bypass &&
                                 module_context.static_bypass_regex.test(request.url())
@@ -90,12 +89,15 @@ class ZyteSmartProxyPlaywright {
                                 });
                             }
                             else {
-                                if (module_context.SPMSessionId) {
-                                    headers['X-Crawlera-Session'] = module_context.SPMSessionId;
+                                const headers = {};
+                                for (const h of await request.headersArray()){
+                                    headers[h.name] = h.value
                                 }
-                                else {
-                                    headers['X-Crawlera-Session'] = 'create';
+
+                                if (module_context.SPMSessionId === undefined){
+                                    module_context.SPMSessionId = await module_context._createSPMSession();
                                 }
+                                headers['X-Crawlera-Session'] = module_context.SPMSessionId;
                                 headers['X-Crawlera-Client'] = 'zyte-smartproxy-playwright/' + version;
                                 headers['X-Crawlera-No-Bancheck'] = '1';
                                 headers['X-Crawlera-Profile'] = 'pass';
@@ -111,10 +113,7 @@ class ZyteSmartProxyPlaywright {
                     });
                     page.on('response', async (response) => {
                         const headers = response.headers();
-                        if (response.ok() && headers['x-crawlera-session']) {
-                            module_context.SPMSessionId = headers['x-crawlera-session'];
-                        }
-                        else if (headers['x-crawlera-error'] === 'bad_session_id') {
+                        if (headers['x-crawlera-error'] === 'bad_session_id') {
                             module_context.SPMSessionId = undefined;
                         }
                     });
@@ -138,6 +137,25 @@ class ZyteSmartProxyPlaywright {
             this._patchPageCreation(browser);
         }
         return browser;
+    }
+
+    async _createSPMSession() {
+        let sessionId = '';
+
+        const url = this.spm_host + '/sessions';
+        const auth = 'Basic ' + Buffer.from(this.apikey + ":").toString('base64');
+
+        const response = await cross_fetch(
+            url,
+            {method: 'POST', headers: {'Authorization': auth}}
+        );
+
+        if (response.ok)
+            sessionId = await response.text();
+        else
+            throw new Error(`Error creating SPM session. Response: ${response.status} ${response.statusText} ${await response.text()}`);
+
+        return sessionId;
     }
 }
 
