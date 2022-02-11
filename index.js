@@ -1,12 +1,273 @@
 const { chromium, devices, errors, firefox, request, selectors, webkit } = require('playwright');
-const cross_fetch = require('cross-fetch');
-const adblocker = require('@cliqz/adblocker-playwright');
+const fetch = require('cross-fetch');
+const adBlockerPlaywright = require('@cliqz/adblocker-playwright');
 const { version } = require('./package.json');
 
-class PlaywrightBlocker extends adblocker.PlaywrightBlocker {
+const defaultSPMHost = 'http://proxy.zyte.com:8011';
+const defaultStaticBypassRegex = /.*?\.(?:txt|json|css|less|js|mjs|cjs|gif|ico|jpe?g|svg|png|webp|mkv|mp4|mpe?g|webm|eot|ttf|woff2?)$/;
+const defaultBlockList = [
+    'https://easylist.to/easylist/easylist.txt',
+    'https://easylist.to/easylist/easyprivacy.txt',
+];
+
+class ZyteSmartProxyPlaywright {
+    constructor(browserType) {
+        this.browserType = browserType;
+    }
+
+    async launch(options) {
+        await this._init(options)
+        if (this.apikey) {
+            options.proxy = {
+                server: this.spmHost,
+            };
+            if (this.browserType === firefox || this.browserType === webkit){
+                options.proxy.username = this.apikey;
+                options.proxy.password = '';
+            }
+
+            // without this argument Chromium requests from embedded iframes are not intercepted
+            // https://bugs.chromium.org/p/chromium/issues/detail?id=924937#c10
+            if (this.browserType === chromium){
+                const spmArgs = [
+                    '--disable-site-isolation-trials', 
+                ];
+
+                if ('args' in options) {
+                    options.args = options.args.concat(spmArgs);
+                } else {
+                    options.args = spmArgs;
+                }
+            }
+        }
+
+        const browser = await this.browserType.launch(options);
+        if (this.apikey) {
+            this._patchPageCreation(browser);
+        }
+
+        return browser;
+    }
+
+    async _init(options) {
+        if (options === undefined)
+            return;
+
+        this.apikey = options.spm_apikey;
+        this.spmHost = options.spm_host || defaultSPMHost;
+
+        this.staticBypass = options.static_bypass !== false;
+        this.staticBypassRegex = options.static_bypass_regex || defaultStaticBypassRegex;
+
+        this.blockAds = options.block_ads !== false;
+        this.blockList = options.block_list || defaultBlockList;
+        if (this.blockAds) {
+            if (this.browserType === chromium) 
+                this.adBlocker = await ChromiumAdBlocker.fromLists(fetch, this.blockList);
+            else
+                this.adBlocker = await PlaywrightAdBlocker.fromLists(fetch, this.blockList);
+        }
+    }
+
+    _patchPageCreation(browser) {
+        browser.newPage = (
+            function(originalMethod, context, zyteSPP) {
+                return async function() {
+                    const page = await originalMethod.apply(context, arguments);
+
+                    if (zyteSPP.browserType === chromium){
+                        const cdpSession = await page.context().newCDPSession(page);
+                        await cdpSession.send('Fetch.enable', {
+                            patterns: [{requestStage: 'Request'}, {requestStage: 'Response'}],
+                            handleAuthRequests: true,
+                        });
+
+                        cdpSession.on('Fetch.requestPaused', async (event) => {
+                            if (zyteSPP._isResponse(event)){
+                                zyteSPP._verifyResponseSessionId(event.responseHeaders);
+                                zyteSPP._continueResponse(cdpSession, event);
+                            } else {
+                                if (zyteSPP.blockAds && zyteSPP.adBlocker.isAd(event, page))
+                                    zyteSPP._blockRequest(cdpSession, event)
+                                else if (zyteSPP.staticBypass && zyteSPP._isStaticContent(event))
+                                    zyteSPP._bypassRequest(cdpSession, event);
+                                else 
+                                    zyteSPP._continueRequest(cdpSession, event);
+                            }
+                        });
+
+                        cdpSession.on('Fetch.authRequired', async (event) => {
+                            zyteSPP._respondToAuthChallenge(cdpSession, event)
+                        });
+                    } else {
+                        await page.route(_url => true, async (route, request) => {
+                            if (zyteSPP.blockAds) 
+                                if (zyteSPP.adBlocker.isRequestBlocked(route)) 
+                                    return;
+
+                            if (
+                                zyteSPP.static_bypass &&
+                                zyteSPP.staticBypassRegex.test(request.url())
+                            ) {
+                                const response = await fetch(request.url());
+
+                                const headers = {};
+                                for (var pair of response.headers.entries()) {
+                                    headers[pair[0]] = pair[1];
+                                }
+
+                                const response_body = await response.buffer();
+                                
+                                route.fulfill({
+                                    status: response.status,
+                                    contentType: response.headers.get('content-type'),
+                                    headers: headers,
+                                    body: response_body,
+                                });
+                            }
+                            else {
+                                const headers = {};
+                                for (const h of await request.headersArray()){
+                                    headers[h.name] = h.value
+                                }
+
+                                if (zyteSPP.SPMSessionId === undefined){
+                                    zyteSPP.SPMSessionId = await zyteSPP._createSPMSession();
+                                }
+                                headers['X-Crawlera-Session'] = zyteSPP.SPMSessionId;
+                                headers['X-Crawlera-Client'] = 'zyte-smartproxy-playwright/' + version;
+                                headers['X-Crawlera-No-Bancheck'] = '1';
+                                headers['X-Crawlera-Profile'] = 'pass';
+                                headers['X-Crawlera-Cookies'] = 'disable';
+                                route.continue({ headers });
+                            }
+                        });
+                        page.on('response', async (response) => {
+                            const headers = response.headers();
+                            if (headers['x-crawlera-error'] === 'bad_session_id') {
+                                zyteSPP.SPMSessionId = undefined;
+                            }
+                        });
+                    }
+                    return page;
+                }
+            }
+        )(browser.newPage, browser, this);
+    }
+
+    _isResponse(event){
+        return event.responseStatusCode || event.responseErrorReason;
+    }
+
+    _verifyResponseSessionId(responseHeaders) {
+        if (responseHeaders) {
+            for (const header of responseHeaders) {
+                if (header.name === 'X-Crawlera-Error' &&
+                    header.value === 'bad_session_id'
+                )
+                    this.spmSessionId = undefined;
+            }
+        }
+    }
+
+    async _continueResponse(cdpSession, event) {
+        await cdpSession.send('Fetch.continueRequest', {
+            requestId: event.requestId,
+        });
+    }
+
+    async _blockRequest(cdpSession, event) {
+        await cdpSession.send('Fetch.failRequest', {
+            requestId: event.requestId,
+            errorReason: 'BlockedByClient',
+        });
+    }
+
+    _isStaticContent(event) {
+        return event.request.method === 'GET' &&
+            event.request.urlFragment === undefined &&
+            this.staticBypassRegex.test(event.request.url)
+    }
+
+    async _bypassRequest(cdpSession, event) {
+        const response = await fetch(event.request.url)
+        const response_body = (await response.buffer()).toString('base64');
+
+        const response_headers = []
+        for (const pair of response.headers.entries()) {
+            if (pair[1] !== undefined)
+                response_headers.push({name: pair[0], value: pair[1] + ''});
+        }
+        
+        await cdpSession.send('Fetch.fulfillRequest', {
+            requestId: event.requestId,
+            responseCode: response.status,
+            responseHeaders: response_headers,
+            body: response_body,
+        });
+    }
+
+    async _continueRequest(cdpSession, event) {
+        const headers = event.request.headers;
+        if (this.spmSessionId === undefined) {
+            this.spmSessionId = await this._createSPMSession();
+        }
+        headers['X-Crawlera-Session'] = this.spmSessionId;
+        headers['X-Crawlera-Client'] = 'zyte-smartproxy-puppeteer/' + version;
+        headers['X-Crawlera-No-Bancheck'] = '1';
+        headers['X-Crawlera-Profile'] = 'pass';
+        headers['X-Crawlera-Cookies'] = 'disable';
+
+        await cdpSession.send('Fetch.continueRequest', {
+            requestId: event.requestId,
+            headers: headersArray(headers),
+        });
+    }
+
+    async _respondToAuthChallenge(cdpSession, event){
+        const parameters = {requestId: event.requestId}
+
+        if (this._isSPMAuthChallenge(event)) 
+            parameters.authChallengeResponse = {
+                response: 'ProvideCredentials',
+                username: this.apikey,
+                password: '',
+            };
+        else 
+            parameters.authChallengeResponse = {response: 'Default'};
+        
+        await cdpSession.send('Fetch.continueWithAuth', parameters);
+    }
+
+    _isSPMAuthChallenge(event) {
+        return event.authChallenge.source === 'Proxy' && 
+            event.authChallenge.origin === this.spmHost
+    }
+
+    async _createSPMSession() {
+        let sessionId = '';
+
+        const url = this.spmHost + '/sessions';
+        const auth = 'Basic ' + Buffer.from(this.apikey + ":").toString('base64');
+
+        const response = await fetch(
+            url,
+            {method: 'POST', headers: {'Authorization': auth}}
+        );
+
+        if (response.ok)
+            sessionId = await response.text();
+        else
+            throw new Error(`Error creating SPM session. Response: ${response.status} ${response.statusText} ${await response.text()}`);
+
+        return sessionId;
+    }
+}
+
+class PlaywrightAdBlocker extends adBlockerPlaywright.PlaywrightBlocker {
     isRequestBlocked(route){
         const details = route.request();
-        const request = adblocker.fromPlaywrightDetails(details);
+        const request = adBlockerPlaywright.fromPlaywrightDetails(details);
         if (this.config.guessRequestTypeFromUrl === true && request.type === 'other') {
             request.guessTypeOfRequest();
         }
@@ -38,125 +299,31 @@ class PlaywrightBlocker extends adblocker.PlaywrightBlocker {
     };
 }
 
-class ZyteSmartProxyPlaywright {
-    constructor(browser_type) {
-        this.browser_type = browser_type;
-    }
+class ChromiumAdBlocker extends adBlockerPlaywright.PlaywrightBlocker {
+    isAd(event, page){
+        const sourceUrl = page.mainFrame().url();
+        const url = event.request.url;
+        const type = event.resourceType.toLowerCase();
 
-    async _configure_zyte_smartproxy_playwright(options) {
-        options = options || {}
-        this.apikey = options.spm_apikey;
-        this.spm_host = options.spm_host || 'http://proxy.zyte.com:8011';
-        this.static_bypass = options.static_bypass !== false;
-        this.static_bypass_regex = options.static_bypass_regex || /.*?\.(?:txt|json|css|less|js|mjs|cjs|gif|ico|jpe?g|svg|png|webp|mkv|mp4|mpe?g|webm|eot|ttf|woff2?)$/;
-        this.block_ads = options.block_ads !== false;
-        this.block_list = options.block_list || [
-            'https://easylist.to/easylist/easylist.txt',
-            'https://easylist.to/easylist/easyprivacy.txt',
-        ];
-        if (this.block_ads) {
-            this.blocker = await PlaywrightBlocker.fromLists(cross_fetch.fetch, this.block_list);
-        }
-    }
-
-    _patchPageCreation(browser) {
-        browser.newPage = (
-            function(originalMethod, context, module_context) {
-                return async function() {
-                    const page = await originalMethod.apply(context, arguments);
-                    await page.route(_url => true, async (route, request) => {
-                        try {
-                            if (module_context.block_ads) 
-                                if (module_context.blocker.isRequestBlocked(route)) 
-                                    return;
-
-                            if (
-                                module_context.static_bypass &&
-                                module_context.static_bypass_regex.test(request.url())
-                            ) {
-                                const response = await cross_fetch.fetch(request.url());
-                                const headers = {};
-                                for (var pair of response.headers.entries()) {
-                                    headers[pair[0]] = pair[1];
-                                }
-                                var response_body = await response.arrayBuffer();
-                                response_body = new Buffer.from(response_body);
-                                route.fulfill({
-                                    status: response.status,
-                                    contentType: response.headers.get('content-type'),
-                                    headers: headers,
-                                    body: response_body,
-                                });
-                            }
-                            else {
-                                const headers = {};
-                                for (const h of await request.headersArray()){
-                                    headers[h.name] = h.value
-                                }
-
-                                if (module_context.SPMSessionId === undefined){
-                                    module_context.SPMSessionId = await module_context._createSPMSession();
-                                }
-                                headers['X-Crawlera-Session'] = module_context.SPMSessionId;
-                                headers['X-Crawlera-Client'] = 'zyte-smartproxy-playwright/' + version;
-                                headers['X-Crawlera-No-Bancheck'] = '1';
-                                headers['X-Crawlera-Profile'] = 'pass';
-                                headers['X-Crawlera-Cookies'] = 'disable';
-                                route.continue({ headers });
-                            }
-                        }
-                        catch (e) {
-                            // Uncomment to debug the issue with failed request.
-                            console.log('Error while interception', e);
-                            route.continue();
-                        }
-                    });
-                    page.on('response', async (response) => {
-                        const headers = response.headers();
-                        if (headers['x-crawlera-error'] === 'bad_session_id') {
-                            module_context.SPMSessionId = undefined;
-                        }
-                    });
-                    return page;
-                }
-            }
-        )(browser.newPage, browser, this);
-    }
-
-    async launch(options) {
-        await this._configure_zyte_smartproxy_playwright(options)
-        if (this.apikey) {
-            options.proxy = {
-                server: this.spm_host,
-                username: this.apikey,
-                password: '',
-            }
-        }
-        const browser = await this.browser_type.launch(options);
-        if (this.apikey) {
-            this._patchPageCreation(browser);
-        }
-        return browser;
-    }
-
-    async _createSPMSession() {
-        let sessionId = '';
-
-        const url = this.spm_host + '/sessions';
-        const auth = 'Basic ' + Buffer.from(this.apikey + ":").toString('base64');
-
-        const response = await cross_fetch(
+        const request = adBlockerPlaywright.makeRequest({
+            requestId: `${type}-${url}-${sourceUrl}`,
+            sourceUrl,
+            type,
             url,
-            {method: 'POST', headers: {'Authorization': auth}}
-        );
+        });
 
-        if (response.ok)
-            sessionId = await response.text();
-        else
-            throw new Error(`Error creating SPM session. Response: ${response.status} ${response.statusText} ${await response.text()}`);
-
-        return sessionId;
+        const { match } = this.match(request);
+        return match === true;
     }
+}
+
+function headersArray(headers) {
+    const result = [];
+    for (const name in headers) {
+        if (headers[name] !== undefined)
+            result.push({name, value: headers[name] + ''});
+    }
+    return result;
 }
 
 module.exports = {
