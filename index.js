@@ -106,7 +106,7 @@ class ZyteSmartProxyPlaywright {
                                     return;
 
                             if (
-                                zyteSPP.static_bypass &&
+                                zyteSPP.staticBypass &&
                                 zyteSPP.staticBypassRegex.test(request.url())
                             ) {
                                 const response = await fetch(request.url());
