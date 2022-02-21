@@ -1,6 +1,6 @@
 {
   "name": "zyte-smartproxy-playwright",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "A playwright enhancement with zyte smart proxy manager services",
   "main": "index.js",
   "scripts": {

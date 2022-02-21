@@ -10,41 +10,17 @@ const defaultBlockList = [
     'https://easylist.to/easylist/easyprivacy.txt',
 ];
 
-class ZyteSmartProxyPlaywright {
+class ZyteSPP {
     constructor(browserType) {
         this.browserType = browserType;
     }
 
     async launch(options) {
         await this._init(options)
-        if (this.apikey) {
-            options.proxy = {
-                server: this.spmHost,
-            };
-            if (this.browserType === firefox || this.browserType === webkit){
-                options.proxy.username = this.apikey;
-                options.proxy.password = '';
-            }
-
-            // without this argument Chromium requests from embedded iframes are not intercepted
-            // https://bugs.chromium.org/p/chromium/issues/detail?id=924937#c10
-            if (this.browserType === chromium){
-                const spmArgs = [
-                    '--disable-site-isolation-trials', 
-                ];
-
-                if ('args' in options) {
-                    options.args = options.args.concat(spmArgs);
-                } else {
-                    options.args = spmArgs;
-                }
-            }
-        }
 
         const browser = await this.browserType.launch(options);
-        if (this.apikey) {
+        if (this.apikey)
             this._patchPageCreation(browser);
-        }
 
         return browser;
     }
@@ -61,12 +37,47 @@ class ZyteSmartProxyPlaywright {
 
         this.blockAds = options.block_ads !== false;
         this.blockList = options.block_list || defaultBlockList;
-        if (this.blockAds) {
-            if (this.browserType === chromium) 
-                this.adBlocker = await ChromiumAdBlocker.fromLists(fetch, this.blockList);
-            else
-                this.adBlocker = await PlaywrightAdBlocker.fromLists(fetch, this.blockList);
-        }
+
+        if (this.apikey)
+            options.proxy = {server: this.spmHost};
+    }
+
+    async _createSPMSession() {
+        let sessionId = '';
+
+        const url = this.spmHost + '/sessions';
+        const auth = 'Basic ' + Buffer.from(this.apikey + ":").toString('base64');
+
+        const response = await fetch(
+            url,
+            {method: 'POST', headers: {'Authorization': auth}}
+        );
+
+        if (response.ok)
+            sessionId = await response.text();
+        else
+            throw new Error(`Error creating SPM session. Response: ${response.status} ${response.statusText} ${await response.text()}`);
+
+        return sessionId;
+    }
+}
+
+class ZyteSPPChromium extends ZyteSPP {
+    async _init(options) {
+        super._init(options)
+
+        if (this.blockAds)
+            this.adBlocker = await ZyteSPPChromiumAdBlocker.fromLists(fetch, this.blockList);
+
+        // without this argument Chromium requests from embedded iframes are not intercepted
+        // https://bugs.chromium.org/p/chromium/issues/detail?id=924937#c10
+        const spmArgs = ['--disable-site-isolation-trials'];
+
+        if ('args' in options) 
+            options.args = options.args.concat(spmArgs);
+        else 
+            options.args = spmArgs;
+
     }
 
     _patchPageCreation(browser) {
@@ -75,80 +86,30 @@ class ZyteSmartProxyPlaywright {
                 return async function() {
                     const page = await originalMethod.apply(context, arguments);
 
-                    if (zyteSPP.browserType === chromium){
-                        const cdpSession = await page.context().newCDPSession(page);
-                        await cdpSession.send('Fetch.enable', {
-                            patterns: [{requestStage: 'Request'}, {requestStage: 'Response'}],
-                            handleAuthRequests: true,
-                        });
+                    const cdpSession = await page.context().newCDPSession(page);
+                    await cdpSession.send('Fetch.enable', {
+                        patterns: [{requestStage: 'Request'}, {requestStage: 'Response'}],
+                        handleAuthRequests: true,
+                    });
 
-                        cdpSession.on('Fetch.requestPaused', async (event) => {
-                            if (zyteSPP._isResponse(event)){
-                                zyteSPP._verifyResponseSessionId(event.responseHeaders);
-                                zyteSPP._continueResponse(cdpSession, event);
-                            } else {
-                                if (zyteSPP.blockAds && zyteSPP.adBlocker.isAd(event, page))
-                                    zyteSPP._blockRequest(cdpSession, event)
-                                else if (zyteSPP.staticBypass && zyteSPP._isStaticContent(event))
-                                    zyteSPP._bypassRequest(cdpSession, event);
-                                else 
-                                    zyteSPP._continueRequest(cdpSession, event);
-                            }
-                        });
+                    cdpSession.on('Fetch.requestPaused', async (event) => {
+                        if (zyteSPP._isResponse(event)){
+                            zyteSPP._verifyResponseSessionId(event.responseHeaders);
+                            zyteSPP._continueResponse(cdpSession, event);
+                        } 
+                        else {
+                            if (zyteSPP.blockAds && zyteSPP.adBlocker.isAd(event, page))
+                                zyteSPP._blockRequest(cdpSession, event)
+                            else if (zyteSPP.staticBypass && zyteSPP._isStaticContent(event))
+                                zyteSPP._bypassRequest(cdpSession, event);
+                            else 
+                                zyteSPP._continueRequest(cdpSession, event);
+                        }
+                    });
 
-                        cdpSession.on('Fetch.authRequired', async (event) => {
-                            zyteSPP._respondToAuthChallenge(cdpSession, event)
-                        });
-                    } else {
-                        await page.route(_url => true, async (route, request) => {
-                            if (zyteSPP.blockAds) 
-                                if (zyteSPP.adBlocker.isRequestBlocked(route)) 
-                                    return;
-
-                            if (
-                                zyteSPP.staticBypass &&
-                                zyteSPP.staticBypassRegex.test(request.url())
-                            ) {
-                                const response = await fetch(request.url());
-
-                                const headers = {};
-                                for (var pair of response.headers.entries()) {
-                                    headers[pair[0]] = pair[1];
-                                }
-
-                                const response_body = await response.buffer();
-                                
-                                route.fulfill({
-                                    status: response.status,
-                                    contentType: response.headers.get('content-type'),
-                                    headers: headers,
-                                    body: response_body,
-                                });
-                            }
-                            else {
-                                const headers = {};
-                                for (const h of await request.headersArray()){
-                                    headers[h.name] = h.value
-                                }
-
-                                if (zyteSPP.SPMSessionId === undefined){
-                                    zyteSPP.SPMSessionId = await zyteSPP._createSPMSession();
-                                }
-                                headers['X-Crawlera-Session'] = zyteSPP.SPMSessionId;
-                                headers['X-Crawlera-Client'] = 'zyte-smartproxy-playwright/' + version;
-                                headers['X-Crawlera-No-Bancheck'] = '1';
-                                headers['X-Crawlera-Profile'] = 'pass';
-                                headers['X-Crawlera-Cookies'] = 'disable';
-                                route.continue({ headers });
-                            }
-                        });
-                        page.on('response', async (response) => {
-                            const headers = response.headers();
-                            if (headers['x-crawlera-error'] === 'bad_session_id') {
-                                zyteSPP.SPMSessionId = undefined;
-                            }
-                        });
-                    }
+                    cdpSession.on('Fetch.authRequired', async (event) => {
+                        zyteSPP._respondToAuthChallenge(cdpSession, event)
+                    });
                     return page;
                 }
             }
@@ -209,9 +170,9 @@ class ZyteSmartProxyPlaywright {
 
     async _continueRequest(cdpSession, event) {
         const headers = event.request.headers;
-        if (this.spmSessionId === undefined) {
+        if (this.spmSessionId === undefined)
             this.spmSessionId = await this._createSPMSession();
-        }
+
         headers['X-Crawlera-Session'] = this.spmSessionId;
         headers['X-Crawlera-Client'] = 'zyte-smartproxy-puppeteer/' + version;
         headers['X-Crawlera-No-Bancheck'] = '1';
@@ -243,63 +204,9 @@ class ZyteSmartProxyPlaywright {
         return event.authChallenge.source === 'Proxy' && 
             event.authChallenge.origin === this.spmHost
     }
-
-    async _createSPMSession() {
-        let sessionId = '';
-
-        const url = this.spmHost + '/sessions';
-        const auth = 'Basic ' + Buffer.from(this.apikey + ":").toString('base64');
-
-        const response = await fetch(
-            url,
-            {method: 'POST', headers: {'Authorization': auth}}
-        );
-
-        if (response.ok)
-            sessionId = await response.text();
-        else
-            throw new Error(`Error creating SPM session. Response: ${response.status} ${response.statusText} ${await response.text()}`);
-
-        return sessionId;
-    }
 }
 
-class PlaywrightAdBlocker extends adBlockerPlaywright.PlaywrightBlocker {
-    isRequestBlocked(route){
-        const details = route.request();
-        const request = adBlockerPlaywright.fromPlaywrightDetails(details);
-        if (this.config.guessRequestTypeFromUrl === true && request.type === 'other') {
-            request.guessTypeOfRequest();
-        }
-        const frame = details.frame();
-        if (request.isMainFrame() ||
-            (request.type === 'document' && frame !== null && frame.parentFrame() === null)) {
-            return false;
-        }
-        const { redirect, match } = this.match(request);
-        if (redirect !== undefined) {
-            if (redirect.contentType.endsWith(';base64')) {
-                route.fulfill({
-                  body: Buffer.from(redirect.body, 'base64'),
-                  contentType: redirect.contentType.slice(0, -7),
-                });
-            } else {
-                route.fulfill({
-                  body: redirect.body,
-                  contentType: redirect.contentType,
-                });
-            }
-            return true;
-        }
-        if (match === true) {
-            route.abort('blockedbyclient');
-            return true;
-        }
-        return false;
-    };
-}
-
-class ChromiumAdBlocker extends adBlockerPlaywright.PlaywrightBlocker {
+class ZyteSPPChromiumAdBlocker extends adBlockerPlaywright.PlaywrightBlocker {
     isAd(event, page){
         const sourceUrl = page.mainFrame().url();
         const url = event.request.url;
@@ -317,21 +224,144 @@ class ChromiumAdBlocker extends adBlockerPlaywright.PlaywrightBlocker {
     }
 }
 
+class ZyteSPPWebkit extends ZyteSPP {
+    async _init(options) {
+        super._init(options);
+
+        if (this.blockAds)
+            this.adBlocker = await ZyteSPPWebkitAdBlocker.fromLists(fetch, this.blockList);
+
+        if (this.apikey) {
+            options.proxy.username = this.apikey;
+            options.proxy.password = '';
+        }
+    }
+
+    _patchPageCreation(browser) {
+        browser.newPage = (
+            function(originalMethod, context, zyteSPP) {
+                return async function() {
+                    const page = await originalMethod.apply(context, arguments);
+
+                    await page.route(_url => true, async (route, request) => {
+                        if (zyteSPP.blockAds) 
+                            if (zyteSPP.adBlocker.isRequestBlocked(route)) 
+                                return;
+
+                        if (zyteSPP.staticBypass && zyteSPP._isStaticContent(request))
+                            zyteSPP._bypassRequest(route, request);
+                        else 
+                            zyteSPP._continueRequest(route, request);
+                    });
+
+                    page.on('response', async (response) => {
+                        zyteSPP._verifyResponseSessionId(response)
+                    });
+
+                    return page;
+                }
+            }
+        )(browser.newPage, browser, this);
+    }
+
+    _isStaticContent(request) {
+        return request.method() === 'GET' &&
+            this.staticBypassRegex.test(request.url())
+    }
+
+    async _bypassRequest(route, request){
+        const response = await fetch(request.url());
+
+        const headers = {};
+        for (var pair of response.headers.entries())
+            headers[pair[0]] = pair[1];
+
+        const response_body = await response.buffer();
+        
+        route.fulfill({
+            status: response.status,
+            contentType: response.headers.get('content-type'),
+            headers: headers,
+            body: response_body,
+        });
+    }
+
+    async _continueRequest(route, request){
+        const headers = {};
+        for (const h of await request.headersArray())
+            headers[h.name] = h.value
+
+        if (this.spmSessionId === undefined)
+            this.spmSessionId = await this._createSPMSession();
+
+        headers['X-Crawlera-Session'] = this.spmSessionId;
+        headers['X-Crawlera-Client'] = 'zyte-smartproxy-playwright/' + version;
+        headers['X-Crawlera-No-Bancheck'] = '1';
+        headers['X-Crawlera-Profile'] = 'pass';
+        headers['X-Crawlera-Cookies'] = 'disable';
+        route.continue({ headers });
+    }
+
+    _verifyResponseSessionId(response) {
+        const headers = response.headers();
+        if (headers['x-crawlera-error'] === 'bad_session_id')
+            this.spmSessionId = undefined;
+    }
+}
+
+class ZyteSPPWebkitAdBlocker extends adBlockerPlaywright.PlaywrightBlocker {
+    isRequestBlocked(route){
+        const details = route.request();
+        const request = adBlockerPlaywright.fromPlaywrightDetails(details);
+        if (this.config.guessRequestTypeFromUrl === true && request.type === 'other')
+            request.guessTypeOfRequest();
+
+        const frame = details.frame();
+        if (request.isMainFrame() ||
+            (request.type === 'document' && frame !== null && frame.parentFrame() === null)
+        )
+            return false;
+
+        const { redirect, match } = this.match(request);
+        if (redirect !== undefined) {
+            if (redirect.contentType.endsWith(';base64'))
+                route.fulfill({
+                  body: Buffer.from(redirect.body, 'base64'),
+                  contentType: redirect.contentType.slice(0, -7),
+                });
+            else
+                route.fulfill({
+                  body: redirect.body,
+                  contentType: redirect.contentType,
+                });
+            
+            return true;
+        }
+        if (match === true) {
+            route.abort('blockedbyclient');
+            return true;
+        }
+        return false;
+    };
+}
+
+class ZyteSPPFirefox extends ZyteSPPWebkit {}
+
 function headersArray(headers) {
     const result = [];
-    for (const name in headers) {
+    for (const name in headers)
         if (headers[name] !== undefined)
             result.push({name, value: headers[name] + ''});
-    }
+
     return result;
 }
 
 module.exports = {
-    chromium: new ZyteSmartProxyPlaywright(chromium),
+    chromium: new ZyteSPPChromium(chromium),
     devices,
     errors,
-    firefox: new ZyteSmartProxyPlaywright(firefox),
+    firefox: new ZyteSPPFirefox(firefox),
     request,
     selectors,
-    webkit: new ZyteSmartProxyPlaywright(webkit),
+    webkit: new ZyteSPPWebkit(webkit),
 };
