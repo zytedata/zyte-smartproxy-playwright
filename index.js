@@ -47,11 +47,12 @@ class ZyteSPP {
 
         const url = this.spmHost + '/sessions';
         const auth = 'Basic ' + Buffer.from(this.apikey + ":").toString('base64');
+        const headers = {
+            'Authorization': auth,
+            'X-Crawlera-Client': 'zyte-smartproxy-playwright/' + version,
+        };
 
-        const response = await fetch(
-            url,
-            {method: 'POST', headers: {'Authorization': auth}}
-        );
+        const response = await fetch(url, {method: 'POST', headers: headers});
 
         if (response.ok)
             sessionId = await response.text();
@@ -174,7 +175,7 @@ class ZyteSPPChromium extends ZyteSPP {
             this.spmSessionId = await this._createSPMSession();
 
         headers['X-Crawlera-Session'] = this.spmSessionId;
-        headers['X-Crawlera-Client'] = 'zyte-smartproxy-puppeteer/' + version;
+        headers['X-Crawlera-Client'] = 'zyte-smartproxy-playwright/' + version;
         headers['X-Crawlera-No-Bancheck'] = '1';
         headers['X-Crawlera-Profile'] = 'pass';
         headers['X-Crawlera-Cookies'] = 'disable';
