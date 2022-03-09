@@ -62,3 +62,7 @@ and some additional arguments defined below:
 | `static_bypass_regex` | `/.*?\.(?:txt\|json\|css\|less\|js\|mjs\|cjs\|gif\|ico\|jpe?g\|svg\|png\|webp\|mkv\|mp4\|mpe?g\|webm\|eot\|ttf\|woff2?)$/` | Regex to use filtering URLs for `static_bypass`. |
 | `block_ads` | `true` | When `true` Zyte SmartProxy Playwright will block ads defined by `block_list` using `@cliqz/adblocker-playwright` package. |
 | `block_list` | `['https://easylist.to/easylist/easylist.txt', 'https://easylist.to/easylist/easyprivacy.txt']` | Block list to be used by Zyte SmartProxy Playwright in order to initiate blocker enginer using `@cliqz/adblocker-playwright` and block ads |
+| `headers` | `{'X-Crawlera-No-Bancheck': '1', 'X-Crawlera-Profile': 'pass', 'X-Crawlera-Cookies': 'disable'}` | List of headers to be appended to requests |
+
+### Notes
+Some websites may not work with `block_ads` and `static_bypass` enabled (default). Try to disable them if you encounter any issues.

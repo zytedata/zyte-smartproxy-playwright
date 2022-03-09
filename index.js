@@ -9,6 +9,11 @@ const defaultBlockList = [
     'https://easylist.to/easylist/easylist.txt',
     'https://easylist.to/easylist/easyprivacy.txt',
 ];
+const defaultHeaders = {
+    'X-Crawlera-No-Bancheck': '1',
+    'X-Crawlera-Profile': 'pass',
+    'X-Crawlera-Cookies': 'disable',
+};
 
 class ZyteSPP {
     constructor(browserType) {
@@ -40,6 +45,8 @@ class ZyteSPP {
 
         if (this.apikey)
             options.proxy = {server: this.spmHost};
+
+        this.headers = options.headers || defaultHeaders;
     }
 
     async _createSPMSession() {
@@ -176,13 +183,11 @@ class ZyteSPPChromium extends ZyteSPP {
 
         headers['X-Crawlera-Session'] = this.spmSessionId;
         headers['X-Crawlera-Client'] = 'zyte-smartproxy-playwright/' + version;
-        headers['X-Crawlera-No-Bancheck'] = '1';
-        headers['X-Crawlera-Profile'] = 'pass';
-        headers['X-Crawlera-Cookies'] = 'disable';
+        const newHeaders = {...headers, ...this.headers}
 
         await cdpSession.send('Fetch.continueRequest', {
             requestId: event.requestId,
-            headers: headersArray(headers),
+            headers: headersArray(newHeaders),
         });
     }
 
@@ -297,10 +302,10 @@ class ZyteSPPWebkit extends ZyteSPP {
 
         headers['X-Crawlera-Session'] = this.spmSessionId;
         headers['X-Crawlera-Client'] = 'zyte-smartproxy-playwright/' + version;
-        headers['X-Crawlera-No-Bancheck'] = '1';
-        headers['X-Crawlera-Profile'] = 'pass';
-        headers['X-Crawlera-Cookies'] = 'disable';
-        route.continue({ headers });
+
+        const newHeaders = {...headers, ...this.headers}
+
+        route.continue({ headers: newHeaders });
     }
 
     _verifyResponseSessionId(response) {
