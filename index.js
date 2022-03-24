@@ -103,20 +103,24 @@ class ZyteSPPChromium extends ZyteSPP {
                     cdpSession.on('Fetch.requestPaused', async (event) => {
                         if (zyteSPP._isResponse(event)){
                             zyteSPP._verifyResponseSessionId(event.responseHeaders);
-                            zyteSPP._continueResponse(cdpSession, event);
+                            await zyteSPP._continueResponse(cdpSession, event);
                         } 
                         else {
                             if (zyteSPP.blockAds && zyteSPP.adBlocker.isAd(event, page))
-                                zyteSPP._blockRequest(cdpSession, event)
+                                await zyteSPP._blockRequest(cdpSession, event)
                             else if (zyteSPP.staticBypass && zyteSPP._isStaticContent(event))
-                                zyteSPP._bypassRequest(cdpSession, event);
+                                try {
+                                    await zyteSPP._bypassRequest(cdpSession, event);
+                                } catch(err) {
+                                    await zyteSPP._continueRequest(cdpSession, event);
+                                }
                             else 
-                                zyteSPP._continueRequest(cdpSession, event);
+                                await zyteSPP._continueRequest(cdpSession, event);
                         }
                     });
 
                     cdpSession.on('Fetch.authRequired', async (event) => {
-                        zyteSPP._respondToAuthChallenge(cdpSession, event)
+                        await zyteSPP._respondToAuthChallenge(cdpSession, event)
                     });
                     return page;
                 }
@@ -255,9 +259,13 @@ class ZyteSPPWebkit extends ZyteSPP {
                                 return;
 
                         if (zyteSPP.staticBypass && zyteSPP._isStaticContent(request))
-                            zyteSPP._bypassRequest(route, request);
+                            try {
+                                await zyteSPP._bypassRequest(route, request);
+                            } catch(err) {
+                                await zyteSPP._continueRequest(route, request);
+                            }
                         else 
-                            zyteSPP._continueRequest(route, request);
+                            await zyteSPP._continueRequest(route, request);
                     });
 
                     page.on('response', async (response) => {
