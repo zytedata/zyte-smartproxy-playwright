@@ -164,20 +164,26 @@ class ZyteSPPChromium extends ZyteSPP {
 
     async _bypassRequest(cdpSession, event) {
         const response = await fetch(event.request.url)
-        const response_body = (await response.buffer()).toString('base64');
 
-        const response_headers = []
-        for (const pair of response.headers.entries()) {
-            if (pair[1] !== undefined)
-                response_headers.push({name: pair[0], value: pair[1] + ''});
+        if (response.status == 200)
+        {
+            const response_body = (await response.buffer()).toString('base64');
+
+            const response_headers = []
+            for (const pair of response.headers.entries()) {
+                if (pair[1] !== undefined)
+                    response_headers.push({name: pair[0], value: pair[1] + ''});
+            }
+            
+            await cdpSession.send('Fetch.fulfillRequest', {
+                requestId: event.requestId,
+                responseCode: response.status,
+                responseHeaders: response_headers,
+                body: response_body,
+            });
+        } else {
+            throw 'Proxy bypass failed';
         }
-        
-        await cdpSession.send('Fetch.fulfillRequest', {
-            requestId: event.requestId,
-            responseCode: response.status,
-            responseHeaders: response_headers,
-            body: response_body,
-        });
     }
 
     async _continueRequest(cdpSession, event) {
@@ -286,18 +292,22 @@ class ZyteSPPWebkit extends ZyteSPP {
     async _bypassRequest(route, request){
         const response = await fetch(request.url());
 
-        const headers = {};
-        for (var pair of response.headers.entries())
-            headers[pair[0]] = pair[1];
+        if (response.status == 200) {
+            const headers = {};
+            for (var pair of response.headers.entries())
+                headers[pair[0]] = pair[1];
 
-        const response_body = await response.buffer();
-        
-        route.fulfill({
-            status: response.status,
-            contentType: response.headers.get('content-type'),
-            headers: headers,
-            body: response_body,
-        });
+            const response_body = await response.buffer();
+            
+            route.fulfill({
+                status: response.status,
+                contentType: response.headers.get('content-type'),
+                headers: headers,
+                body: response_body,
+            });
+        } else {
+            throw 'Proxy bypass failed';
+        }
     }
 
     async _continueRequest(route, request){
