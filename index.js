@@ -4,7 +4,7 @@ const adBlockerPlaywright = require('@cliqz/adblocker-playwright');
 const { version } = require('./package.json');
 
 const defaultSPMHost = 'http://proxy.zyte.com:8011';
-const defaultStaticBypassRegex = /.*?\.(?:txt|json|css|less|js|mjs|cjs|gif|ico|jpe?g|svg|png|webp|mkv|mp4|mpe?g|webm|eot|ttf|woff2?)$/;
+const defaultStaticBypassRegex = /.*?\.(?:txt|json|css|less|mjs|cjs|gif|ico|jpe?g|svg|png|webp|mkv|mp4|mpe?g|webm|eot|ttf|woff2?)$/;
 const defaultBlockList = [
     'https://easylist.to/easylist/easylist.txt',
     'https://easylist.to/easylist/easyprivacy.txt',
@@ -163,7 +163,8 @@ class ZyteSPPChromium extends ZyteSPP {
     }
 
     async _bypassRequest(cdpSession, event) {
-        const response = await fetch(event.request.url)
+        const headers = event.request.headers;
+        const response = await fetch(event.request.url, {headers})
 
         if (response.status == 200)
         {
@@ -290,7 +291,11 @@ class ZyteSPPWebkit extends ZyteSPP {
     }
 
     async _bypassRequest(route, request){
-        const response = await fetch(request.url());
+        const headers = {};
+        for (const h of await request.headersArray())
+            headers[h.name] = h.value;
+
+        const response = await fetch(request.url(), {headers});
 
         if (response.status == 200) {
             const headers = {};
