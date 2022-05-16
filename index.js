@@ -4,7 +4,7 @@ const adBlockerPlaywright = require('@cliqz/adblocker-playwright');
 const { version } = require('./package.json');
 
 const defaultSPMHost = 'http://proxy.zyte.com:8011';
-const defaultStaticBypassRegex = /.*?\.(?:txt|json|css|less|mjs|cjs|gif|ico|jpe?g|svg|png|webp|mkv|mp4|mpe?g|webm|eot|ttf|woff2?)$/;
+const defaultStaticBypassRegex = /.*?\.(?:txt|json|css|less|js|mjs|cjs|gif|ico|jpe?g|svg|png|webp|mkv|mp4|mpe?g|webm|eot|ttf|woff2?)$/;
 const defaultBlockList = [
     'https://easylist.to/easylist/easylist.txt',
     'https://easylist.to/easylist/easyprivacy.txt',
