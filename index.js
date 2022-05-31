@@ -26,6 +26,7 @@ class ZyteSPP {
         const browser = await this.browserType.launch(options);
         if (this.apikey)
             this._patchPageCreation(browser);
+            this._patchContextCreation(browser);
 
         return browser;
     }
@@ -88,44 +89,68 @@ class ZyteSPPChromium extends ZyteSPP {
 
     }
 
+    async _createCDPSession(context, page) {
+        const cdpSession = await context.newCDPSession(page);
+        await cdpSession.send('Fetch.enable', {
+            patterns: [{requestStage: 'Request'}, {requestStage: 'Response'}],
+            handleAuthRequests: true,
+        });
+
+        cdpSession.on('Fetch.requestPaused', async (event) => {
+            if (this._isResponse(event)){
+                this._verifyResponseSessionId(event.responseHeaders);
+                await this._continueResponse(cdpSession, event);
+            } 
+            else {
+                if (this.blockAds && this.adBlocker.isAd(event, page))
+                    await this._blockRequest(cdpSession, event)
+                else if (this.staticBypass && this._isStaticContent(event))
+                    try {
+                        await this._bypassRequest(cdpSession, event);
+                    } catch(err) {
+                        await this._continueRequest(cdpSession, event);
+                    }
+                else 
+                    await this._continueRequest(cdpSession, event);
+            }
+        });
+
+        cdpSession.on('Fetch.authRequired', async (event) => {
+            await this._respondToAuthChallenge(cdpSession, event)
+        });
+    }
+
     _patchPageCreation(browser) {
         browser.newPage = (
-            function(originalMethod, context, zyteSPP) {
+            function(originalMethod, originalBrowser, zyteSPP) {
                 return async function() {
-                    const page = await originalMethod.apply(context, arguments);
-
-                    const cdpSession = await page.context().newCDPSession(page);
-                    await cdpSession.send('Fetch.enable', {
-                        patterns: [{requestStage: 'Request'}, {requestStage: 'Response'}],
-                        handleAuthRequests: true,
-                    });
-
-                    cdpSession.on('Fetch.requestPaused', async (event) => {
-                        if (zyteSPP._isResponse(event)){
-                            zyteSPP._verifyResponseSessionId(event.responseHeaders);
-                            await zyteSPP._continueResponse(cdpSession, event);
-                        } 
-                        else {
-                            if (zyteSPP.blockAds && zyteSPP.adBlocker.isAd(event, page))
-                                await zyteSPP._blockRequest(cdpSession, event)
-                            else if (zyteSPP.staticBypass && zyteSPP._isStaticContent(event))
-                                try {
-                                    await zyteSPP._bypassRequest(cdpSession, event);
-                                } catch(err) {
-                                    await zyteSPP._continueRequest(cdpSession, event);
-                                }
-                            else 
-                                await zyteSPP._continueRequest(cdpSession, event);
-                        }
-                    });
-
-                    cdpSession.on('Fetch.authRequired', async (event) => {
-                        await zyteSPP._respondToAuthChallenge(cdpSession, event)
-                    });
+                    const page = await originalMethod.apply(originalBrowser, arguments);
+                    await zyteSPP._createCDPSession(page.context(), page)
                     return page;
                 }
             }
         )(browser.newPage, browser, this);
+    }
+
+    _patchContextCreation(browser) {
+        browser.newContext = (
+            function(originalMethod, originalBrowser, zyteSPP) {
+                return async function() {
+                    const context = await originalMethod.apply(originalBrowser, arguments);
+                    context.newPage = (
+                        function(originalMethod, originalContext, zyteSPP) {
+                            return async function() {
+                                const page = await originalMethod.apply(originalContext, arguments);
+                                await zyteSPP._createCDPSession(originalContext, page)
+                                return page;
+                            }
+                        }
+                    )(context.newPage, context, zyteSPP);
+
+                    return context;
+                }
+            }
+        )(browser.newContext, browser, this);
     }
 
     _isResponse(event){
@@ -256,9 +281,9 @@ class ZyteSPPWebkit extends ZyteSPP {
 
     _patchPageCreation(browser) {
         browser.newPage = (
-            function(originalMethod, context, zyteSPP) {
+            function(originalMethod, originalBrowser, zyteSPP) {
                 return async function() {
-                    const page = await originalMethod.apply(context, arguments);
+                    const page = await originalMethod.apply(originalBrowser, arguments);
 
                     await page.route(_url => true, async (route, request) => {
                         if (zyteSPP.blockAds) 
@@ -283,6 +308,37 @@ class ZyteSPPWebkit extends ZyteSPP {
                 }
             }
         )(browser.newPage, browser, this);
+    }
+
+    _patchContextCreation(browser) {
+        browser.newContext = (
+            function(originalMethod, originalBrowser, zyteSPP) {
+                return async function() {
+                    const context = await originalMethod.apply(originalBrowser, arguments);
+
+                    await context.route(_url => true, async (route, request) => {
+                        if (zyteSPP.blockAds) 
+                            if (zyteSPP.adBlocker.isRequestBlocked(route)) 
+                                return;
+
+                        if (zyteSPP.staticBypass && zyteSPP._isStaticContent(request))
+                            try {
+                                await zyteSPP._bypassRequest(route, request);
+                            } catch(err) {
+                                await zyteSPP._continueRequest(route, request);
+                            }
+                        else 
+                            await zyteSPP._continueRequest(route, request);
+                    });
+
+                    context.on('response', async (response) => {
+                        zyteSPP._verifyResponseSessionId(response)
+                    });
+
+                    return context;
+                }
+            }
+        )(browser.newContext, browser, this);
     }
 
     _isStaticContent(request) {
