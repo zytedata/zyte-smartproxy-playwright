@@ -66,3 +66,12 @@ and some additional arguments defined below:
 
 ### Notes
 Some websites may not work with `block_ads` and `static_bypass` enabled (default). Try to disable them if you encounter any issues.
+
+When using the `headless: true` mode, values generated for some browser-specific headers are a bit different, which may be detected by websites. Try using ['X-Crawlera-Profile': 'desktop'](https://docs.zyte.com/smart-proxy-manager.html#x-crawlera-profile) in that case:
+``` javascript
+    const browser = await chromium.launch({
+        spm_apikey: '<SPM_APIKEY>',
+        headless: true,
+        headers: {'X-Crawlera-No-Bancheck': '1', 'X-Crawlera-Profile': 'desktop', 'X-Crawlera-Cookies': 'disable'}
+    });
+```
