@@ -64,14 +64,19 @@ and some additional arguments defined below:
 | `block_list` | `['https://easylist.to/easylist/easylist.txt', 'https://easylist.to/easylist/easyprivacy.txt']` | Block list to be used by Zyte SmartProxy Playwright in order to initiate blocker enginer using `@cliqz/adblocker-playwright` and block ads |
 | `headers` | `{'X-Crawlera-No-Bancheck': '1', 'X-Crawlera-Profile': 'pass', 'X-Crawlera-Cookies': 'disable'}` | List of headers to be appended to requests |
 
-### Notes
-Some websites may not work with `block_ads` and `static_bypass` enabled (default). Try to disable them if you encounter any issues.
+## Notes
+- Some websites may not work with `block_ads` and `static_bypass` enabled (default). Try to disable them if you encounter any issues.
 
-When using the `headless: true` mode, values generated for some browser-specific headers are a bit different, which may be detected by websites. Try using ['X-Crawlera-Profile': 'desktop'](https://docs.zyte.com/smart-proxy-manager.html#x-crawlera-profile) in that case:
+- When using the `headless: true` mode, values generated for some browser-specific headers are a bit different, which may be detected by websites. Try using ['X-Crawlera-Profile': 'desktop'](https://docs.zyte.com/smart-proxy-manager.html#x-crawlera-profile) in that case:
 ``` javascript
     const browser = await chromium.launch({
         spm_apikey: '<SPM_APIKEY>',
         headless: true,
         headers: {'X-Crawlera-No-Bancheck': '1', 'X-Crawlera-Profile': 'desktop', 'X-Crawlera-Cookies': 'disable'}
     });
+```
+
+- When connecting to a remote Chrome browser instance, it should be launched with these arguments:
+```
+--proxy-server=http://proxy.zyte.com:8011 --disable-site-isolation-trials
 ```
