@@ -6,8 +6,8 @@ const { version } = require('./package.json');
 const defaultSPMHost = 'http://proxy.zyte.com:8011';
 const defaultStaticBypassRegex = /.*?\.(?:txt|json|css|less|gif|ico|jpe?g|svg|png|webp|mkv|mp4|mpe?g|webm|eot|ttf|woff2?)$/;
 const defaultBlockList = [
-    'https://easylist.to/easylist/easylist.txt',
-    'https://easylist.to/easylist/easyprivacy.txt',
+    'https://secure.fanboy.co.nz/easylist.txt',
+    'https://secure.fanboy.co.nz/easyprivacy.txt',
 ];
 const defaultHeaders = {
     'X-Crawlera-No-Bancheck': '1',
