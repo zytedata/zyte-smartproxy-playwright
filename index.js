@@ -220,7 +220,7 @@ class ZyteSPPChromium extends ZyteSPP {
     }
 
     _isStaticContent(event) {
-        return event.request.method === 'GET' &&
+        return ['GET', 'OPTIONS'].includes(event.request.method) &&
             event.request.urlFragment === undefined &&
             this.staticBypassRegex.test(event.request.url)
     }
@@ -386,7 +386,7 @@ class ZyteSPPWebkit extends ZyteSPP {
     }
 
     _isStaticContent(request) {
-        return request.method() === 'GET' &&
+        return ['GET', 'OPTIONS'].includes(request.method()) &&
             this.staticBypassRegex.test(request.url())
     }
 
