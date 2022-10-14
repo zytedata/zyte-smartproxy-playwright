@@ -220,9 +220,7 @@ class ZyteSPPChromium extends ZyteSPP {
     }
 
     _isStaticContent(event) {
-        return ['GET', 'OPTIONS'].includes(event.request.method) &&
-            event.request.urlFragment === undefined &&
-            this.staticBypassRegex.test(event.request.url)
+        return this.staticBypassRegex.test(event.request.url)
     }
 
     async _bypassRequest(cdpSession, event, page) {
@@ -386,8 +384,7 @@ class ZyteSPPWebkit extends ZyteSPP {
     }
 
     _isStaticContent(request) {
-        return ['GET', 'OPTIONS'].includes(request.method()) &&
-            this.staticBypassRegex.test(request.url())
+        return this.staticBypassRegex.test(request.url())
     }
 
     async _bypassRequest(route, request){
