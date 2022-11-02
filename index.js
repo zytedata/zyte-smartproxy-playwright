@@ -203,20 +203,20 @@ class ZyteSPPChromium extends ZyteSPP {
     }
 
     async _continueResponse(cdpSession, event, page) {
-        if (!page.isClosed()) {
+        try {
             await cdpSession.send('Fetch.continueRequest', {
                 requestId: event.requestId,
             });
-        }
+        } catch(err) {}
     }
 
     async _blockRequest(cdpSession, event, page) {
-        if (!page.isClosed()) {
+        try {
             await cdpSession.send('Fetch.failRequest', {
                 requestId: event.requestId,
                 errorReason: 'BlockedByClient',
             });
-        }
+        } catch(err) {}
     }
 
     _isStaticContent(event) {
@@ -237,14 +237,14 @@ class ZyteSPPChromium extends ZyteSPP {
                     response_headers.push({name: pair[0], value: pair[1] + ''});
             }
             
-            if (!page.isClosed()) {
+            try {
                 await cdpSession.send('Fetch.fulfillRequest', {
                     requestId: event.requestId,
                     responseCode: response.status,
                     responseHeaders: response_headers,
                     body: response_body,
                 });
-            }
+            } catch(err) {}
         } else {
             throw 'Proxy bypass failed';
         }
@@ -259,12 +259,12 @@ class ZyteSPPChromium extends ZyteSPP {
         headers['X-Crawlera-Client'] = 'zyte-smartproxy-playwright/' + version;
         const newHeaders = {...headers, ...this.headers}
         
-        if (!page.isClosed()) {
+        try {
             await cdpSession.send('Fetch.continueRequest', {
                 requestId: event.requestId,
                 headers: headersArray(newHeaders),
             });
-        }
+        } catch(err) {}
     }
 
     async _respondToAuthChallenge(cdpSession, event, page){
@@ -279,9 +279,9 @@ class ZyteSPPChromium extends ZyteSPP {
         else 
             parameters.authChallengeResponse = {response: 'Default'};
         
-        if (!page.isClosed()) {
+        try {
             await cdpSession.send('Fetch.continueWithAuth', parameters);
-        }
+        } catch(err) {}
     }
 
     _isSPMAuthChallenge(event) {

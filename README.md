@@ -24,6 +24,8 @@ const { chromium } = require('zyte-smartproxy-playwright'); // Or 'firefox' or '
     const browser = await chromium.launch({
         spm_apikey: '<SPM_APIKEY>',
         headless: false,
+        static_bypass: false, //  enable to save bandwidth (but may break some websites)
+        block_ads: false, //  enable to save bandwidth (but may break some websites)
     });
     console.log('Before new page');
     const page = await browser.newPage({ignoreHTTPSErrors: true});
