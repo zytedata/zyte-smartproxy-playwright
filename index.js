@@ -133,24 +133,24 @@ class ZyteSPPChromium extends ZyteSPP {
         cdpSession.on('Fetch.requestPaused', async (event) => {
             if (this._isResponse(event)){
                 this._verifyResponseSessionId(event.responseHeaders);
-                await this._continueResponse(cdpSession, event, page);
+                await this._continueResponse(cdpSession, event);
             } 
             else {
                 if (this.blockAds && this.adBlocker.isAd(event, page))
-                    await this._blockRequest(cdpSession, event, page)
+                    await this._blockRequest(cdpSession, event)
                 else if (this.staticBypass && this._isStaticContent(event))
                     try {
-                        await this._bypassRequest(cdpSession, event, page);
+                        await this._bypassRequest(cdpSession, event);
                     } catch(err) {
-                        await this._continueRequest(cdpSession, event, page);
+                        await this._continueRequest(cdpSession, event);
                     }
                 else 
-                    await this._continueRequest(cdpSession, event, page);
+                    await this._continueRequest(cdpSession, event);
             }
         });
 
         cdpSession.on('Fetch.authRequired', async (event) => {
-            await this._respondToAuthChallenge(cdpSession, event, page)
+            await this._respondToAuthChallenge(cdpSession, event)
         });
     }
 
@@ -202,7 +202,7 @@ class ZyteSPPChromium extends ZyteSPP {
         }
     }
 
-    async _continueResponse(cdpSession, event, page) {
+    async _continueResponse(cdpSession, event) {
         try {
             await cdpSession.send('Fetch.continueRequest', {
                 requestId: event.requestId,
@@ -210,7 +210,7 @@ class ZyteSPPChromium extends ZyteSPP {
         } catch(err) {}
     }
 
-    async _blockRequest(cdpSession, event, page) {
+    async _blockRequest(cdpSession, event) {
         try {
             await cdpSession.send('Fetch.failRequest', {
                 requestId: event.requestId,
@@ -223,7 +223,7 @@ class ZyteSPPChromium extends ZyteSPP {
         return this.staticBypassRegex.test(event.request.url)
     }
 
-    async _bypassRequest(cdpSession, event, page) {
+    async _bypassRequest(cdpSession, event) {
         const headers = event.request.headers;
         const response = await fetch(event.request.url, {headers})
 
@@ -250,7 +250,7 @@ class ZyteSPPChromium extends ZyteSPP {
         }
     }
 
-    async _continueRequest(cdpSession, event, page) {
+    async _continueRequest(cdpSession, event) {
         const headers = event.request.headers;
         if (this.spmSessionId === undefined)
             this.spmSessionId = await this._createSPMSession();
@@ -267,7 +267,7 @@ class ZyteSPPChromium extends ZyteSPP {
         } catch(err) {}
     }
 
-    async _respondToAuthChallenge(cdpSession, event, page){
+    async _respondToAuthChallenge(cdpSession, event){
         const parameters = {requestId: event.requestId}
 
         if (this._isSPMAuthChallenge(event)) 
